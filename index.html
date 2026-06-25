@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WhatsApp Chat Viewer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --wa-green: #00a884;
+    --wa-green-dark: #008069;
+    --wa-bg: #efeae2;
+    --wa-bg-pattern: #ddd5c8;
+    --wa-panel: #ffffff;
+    --wa-sidebar: #111b21;
+    --wa-sidebar-text: #e9edef;
+    --wa-sidebar-sub: #8696a0;
+    --wa-sidebar-hover: #202c33;
+    --wa-sidebar-active: #2a3942;
+    --wa-header: #202c33;
+    --wa-bubble-out: #d9fdd3;
+    --wa-bubble-in: #ffffff;
+    --wa-bubble-text: #111b21;
+    --wa-time: #667781;
+    --wa-divider: rgba(255,255,255,0.85);
+    --wa-input-bg: #2a3942;
+    --radius-bubble: 7.5px;
+  }
+
+  body {
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    background: #0b141a;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ── Drop Screen ── */
+  #drop-screen {
+    position: fixed; inset: 0;
+    background: linear-gradient(135deg, #0b141a 0%, #1a2a33 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    z-index: 100;
+  }
+  #drop-screen.hidden { display: none; }
+
+  .drop-logo {
+    width: 80px; height: 80px;
+    background: var(--wa-green);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .drop-logo svg { width: 44px; height: 44px; fill: white; }
+
+  .drop-title { color: #e9edef; font-size: 26px; font-weight: 300; letter-spacing: 0.3px; }
+  .drop-sub { color: #8696a0; font-size: 14px; text-align: center; max-width: 320px; line-height: 1.6; }
+
+  #drop-zone {
+    border: 2px dashed #3b4a54;
+    border-radius: 16px;
+    padding: 48px 64px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: rgba(255,255,255,0.03);
+    min-width: 340px;
+  }
+  #drop-zone:hover, #drop-zone.dragover {
+    border-color: var(--wa-green);
+    background: rgba(0,168,132,0.08);
+  }
+  .drop-icon { font-size: 48px; margin-bottom: 12px; }
+  .drop-label { color: #e9edef; font-size: 16px; margin-bottom: 6px; }
+  .drop-hint { color: #8696a0; font-size: 13px; }
+  .drop-btn {
+    display: inline-block;
+    margin-top: 14px;
+    padding: 10px 24px;
+    background: var(--wa-green);
+    color: white;
+    border: none;
+    border-radius: 24px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.2s;
+  }
+  .drop-btn:hover { background: var(--wa-green-dark); }
+  #file-input { display: none; }
+
+  .drop-info { color: #8696a0; font-size: 12px; text-align: center; margin-top: 6px; }
+  .drop-info b { color: #e9edef; }
+
+  /* ── App Shell ── */
+  #app {
+    display: none;
+    width: 100vw; height: 100vh;
+    flex-direction: row;
+  }
+  #app.visible { display: flex; }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 380px;
+    min-width: 300px;
+    background: var(--wa-sidebar);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #1e2c33;
+    flex-shrink: 0;
+  }
+
+  .sidebar-header {
+    background: var(--wa-header);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 59px;
+    flex-shrink: 0;
+  }
+  .sidebar-header-title { color: var(--wa-sidebar-text); font-size: 20px; font-weight: 600; }
+
+  .search-bar {
+    padding: 8px 12px;
+    background: var(--wa-sidebar);
+    flex-shrink: 0;
+  }
+  .search-bar input {
+    width: 100%;
+    background: var(--wa-input-bg);
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    color: var(--wa-sidebar-text);
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+  }
+  .search-bar input::placeholder { color: var(--wa-sidebar-sub); }
+
+  #chat-list {
+    flex: 1;
+    overflow-y: auto;
+  }
+  #chat-list::-webkit-scrollbar { width: 6px; }
+  #chat-list::-webkit-scrollbar-thumb { background: #374248; border-radius: 3px; }
+
+  .chat-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    transition: background 0.1s;
+  }
+  .chat-item:hover { background: var(--wa-sidebar-hover); }
+  .chat-item.active { background: var(--wa-sidebar-active); }
+
+  .chat-avatar {
+    width: 49px; height: 49px; border-radius: 50%;
+    background: var(--wa-green-dark);
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 20px; font-weight: 500;
+    flex-shrink: 0;
+  }
+  .chat-avatar.group { background: #54656f; }
+
+  .chat-info { flex: 1; min-width: 0; }
+  .chat-name { color: var(--wa-sidebar-text); font-size: 15px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-preview { color: var(--wa-sidebar-sub); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+
+  .chat-meta { text-align: right; flex-shrink: 0; }
+  .chat-time { color: var(--wa-sidebar-sub); font-size: 12px; white-space: nowrap; }
+  .msg-count {
+    display: inline-block;
+    background: var(--wa-green);
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 12px;
+    padding: 1px 6px;
+    margin-top: 4px;
+    min-width: 20px;
+    text-align: center;
+  }
+
+  /* ── Chat Window ── */
+  #chat-window {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--wa-bg);
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Tiled background pattern */
+  #chat-window::before {
+    content: '';
+    position: absolute; inset: 0;
+    opacity: 0.06;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 5 L55 20 L55 40 L30 55 L5 40 L5 20Z' fill='none' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .chat-header {
+    background: var(--wa-header);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 59px;
+    flex-shrink: 0;
+    position: relative; z-index: 1;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  .header-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--wa-green-dark);
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 16px; font-weight: 500;
+    flex-shrink: 0;
+  }
+  .header-avatar.group { background: #54656f; }
+  .header-info { flex: 1; min-width: 0; }
+  .header-name { color: var(--wa-sidebar-text); font-size: 16px; font-weight: 500; }
+  .header-sub { color: var(--wa-sidebar-sub); font-size: 13px; margin-top: 1px; }
+
+  .header-actions { display: flex; gap: 8px; }
+  .icon-btn {
+    background: none; border: none; cursor: pointer;
+    color: var(--wa-sidebar-sub); padding: 6px; border-radius: 50%;
+    transition: color 0.2s, background 0.2s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:hover { color: var(--wa-sidebar-text); background: rgba(255,255,255,0.08); }
+
+  /* ── Messages Area ── */
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 6% 16px;
+    position: relative; z-index: 1;
+    scroll-behavior: smooth;
+  }
+  #messages::-webkit-scrollbar { width: 6px; }
+  #messages::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
+
+  /* Date divider */
+  .date-divider {
+    text-align: center;
+    margin: 12px 0 8px;
+    position: relative;
+  }
+  .date-divider span {
+    background: var(--wa-divider);
+    color: #54656f;
+    font-size: 12.5px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.12);
+  }
+
+  /* Bubble */
+  .bubble-row {
+    display: flex;
+    margin-bottom: 2px;
+  }
+  .bubble-row.out { justify-content: flex-end; }
+  .bubble-row.in { justify-content: flex-start; }
+  .bubble-row.system { justify-content: center; }
+
+  .bubble-row + .bubble-row.out,
+  .bubble-row + .bubble-row.in { margin-top: 1px; }
+
+  .bubble {
+    max-width: 65%;
+    min-width: 80px;
+    padding: 6px 9px 8px;
+    border-radius: var(--radius-bubble);
+    position: relative;
+    word-break: break-word;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.13);
+  }
+  .bubble-row.out .bubble {
+    background: var(--wa-bubble-out);
+    border-top-right-radius: 0;
+    color: var(--wa-bubble-text);
+  }
+  .bubble-row.in .bubble {
+    background: var(--wa-bubble-in);
+    border-top-left-radius: 0;
+    color: var(--wa-bubble-text);
+  }
+  .bubble-row.system .bubble {
+    background: var(--wa-divider);
+    border-radius: 6px;
+    color: #54656f;
+    font-size: 12.5px;
+    text-align: center;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+    max-width: 80%;
+    padding: 5px 14px;
+  }
+
+  /* Tail arrows */
+  .bubble-row.out .bubble::after {
+    content: '';
+    position: absolute;
+    top: 0; right: -8px;
+    border: 8px solid transparent;
+    border-top-color: var(--wa-bubble-out);
+    border-right: 0;
+  }
+  .bubble-row.in .bubble::after {
+    content: '';
+    position: absolute;
+    top: 0; left: -8px;
+    border: 8px solid transparent;
+    border-top-color: var(--wa-bubble-in);
+    border-left: 0;
+  }
+  /* Suppress tail when same sender clusters */
+  .bubble-row.no-tail .bubble::after { display: none; }
+
+  .bubble-sender {
+    font-size: 12.5px;
+    font-weight: 600;
+    margin-bottom: 2px;
+    line-height: 1.2;
+  }
+
+  .bubble-text { font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; }
+
+  .bubble-media {
+    font-size: 13.5px;
+    color: #8696a0;
+    font-style: italic;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 0;
+  }
+
+  .bubble-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .bubble-time { font-size: 11px; color: var(--wa-time); white-space: nowrap; }
+  .tick { width: 16px; height: 11px; fill: #53bdeb; }
+
+  /* Deleted message */
+  .bubble-text.deleted { color: #8696a0; font-style: italic; }
+
+  /* ── Bottom bar ── */
+  .chat-bottom {
+    background: var(--wa-header);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: relative; z-index: 1;
+    flex-shrink: 0;
+  }
+  .chat-bottom-input {
+    flex: 1;
+    background: var(--wa-input-bg);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    color: #8696a0;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    cursor: default;
+  }
+
+  /* ── Empty state ── */
+  #empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--wa-bg);
+    gap: 12px;
+    position: relative; z-index: 1;
+  }
+  .empty-icon {
+    width: 200px; height: 200px;
+    background: #3b4a54;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0.3;
+  }
+  .empty-icon svg { width: 100px; height: 100px; fill: white; }
+  .empty-title { color: #e9edef; font-size: 32px; font-weight: 300; opacity: 0.9; }
+  .empty-sub { color: #8696a0; font-size: 14px; text-align: center; max-width: 360px; line-height: 1.6; }
+
+  /* ── Search in chat ── */
+  .msg-search-bar {
+    padding: 8px 16px;
+    background: var(--wa-sidebar);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    position: relative; z-index: 2;
+  }
+  .msg-search-bar input {
+    flex: 1;
+    background: var(--wa-input-bg);
+    border: none;
+    border-radius: 8px;
+    padding: 7px 12px;
+    color: var(--wa-sidebar-text);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+  }
+  .msg-search-bar input::placeholder { color: var(--wa-sidebar-sub); }
+  .msg-search-bar.hidden { display: none; }
+
+  #msg-search-count { color: var(--wa-sidebar-sub); font-size: 12px; white-space: nowrap; }
+
+  .highlight { background: #f0c040; border-radius: 2px; color: #111; }
+
+  /* ── Stats bar ── */
+  .stats-bar {
+    background: rgba(0,168,132,0.12);
+    border-top: 1px solid rgba(0,168,132,0.2);
+    padding: 5px 16px;
+    display: flex;
+    gap: 16px;
+    flex-shrink: 0;
+    position: relative; z-index: 1;
+    overflow-x: auto;
+  }
+  .stat-item { color: #8696a0; font-size: 12px; white-space: nowrap; }
+  .stat-item b { color: var(--wa-green); font-weight: 600; }
+
+  /* ── Scrollback btn ── */
+  #scroll-btn {
+    position: absolute;
+    bottom: 80px; right: 24px;
+    z-index: 5;
+    width: 42px; height: 42px;
+    background: #202c33;
+    border: none; border-radius: 50%;
+    color: var(--wa-sidebar-sub);
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    transition: color 0.2s;
+  }
+  #scroll-btn:hover { color: var(--wa-sidebar-text); }
+  #scroll-btn.visible { display: flex; }
+
+  /* Loading overlay */
+  #loading {
+    position: fixed; inset: 0;
+    background: rgba(11,20,26,0.92);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px; z-index: 200;
+  }
+  #loading.hidden { display: none; }
+  .spinner {
+    width: 40px; height: 40px;
+    border: 3px solid rgba(255,255,255,0.1);
+    border-top-color: var(--wa-green);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { color: #8696a0; font-size: 14px; }
+
+  /* Responsive */
+  @media (max-width: 720px) {
+    #sidebar { width: 100%; position: absolute; z-index: 10; }
+    #sidebar.hidden { display: none; }
+    #chat-window { width: 100%; }
+    .bubble { max-width: 82%; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Drop Screen ── -->
+<div id="drop-screen">
+  <div class="drop-logo">
+    <svg viewBox="0 0 32 32"><path d="M16 2C8.268 2 2 8.268 2 16c0 2.47.67 4.78 1.836 6.76L2 30l7.46-1.818A13.94 13.94 0 0 0 16 30c7.732 0 14-6.268 14-14S23.732 2 16 2zm0 2c6.627 0 12 5.373 12 12S22.627 28 16 28c-2.196 0-4.25-.592-6.018-1.625l-.43-.258-4.428 1.08 1.1-4.29-.284-.46A11.94 11.94 0 0 1 4 16C4 9.373 9.373 4 16 4zm-3.5 6.5c-.278 0-.722.104-1.1.52-.378.416-1.4 1.37-1.4 3.344 0 1.972 1.432 3.878 1.63 4.146.196.27 2.774 4.41 6.844 6.01.96.37 1.71.59 2.294.754.963.27 1.84.232 2.532.14.773-.1 2.38-.972 2.716-1.91.338-.938.338-1.742.236-1.91-.1-.166-.37-.262-.776-.46-.406-.196-2.4-1.184-2.772-1.318-.374-.136-.646-.204-.918.204-.27.406-1.05 1.318-1.286 1.588-.238.27-.474.304-.88.102-.406-.204-1.714-.632-3.266-2.014-1.208-1.076-2.022-2.406-2.26-2.812-.236-.406-.024-.624.178-.826.18-.18.406-.474.608-.71.202-.234.27-.404.406-.674.134-.27.066-.508-.034-.71-.1-.204-.918-2.21-1.26-3.024-.338-.81-.68-.7-.918-.714l-.78-.01z"/></svg>
+  </div>
+  <div class="drop-title">WhatsApp Chat Viewer</div>
+  <div class="drop-sub">Open your exported chats — completely offline, nothing leaves your device.</div>
+
+  <div id="drop-zone">
+    <div class="drop-icon">📦</div>
+    <div class="drop-label">Drop your backup ZIP here</div>
+    <div class="drop-hint">or click to browse</div>
+    <button class="drop-btn" onclick="document.getElementById('file-input').click()">Choose file</button>
+  </div>
+  <input type="file" id="file-input" accept=".zip,.txt" />
+  <div class="drop-info">Supports <b>WhatsApp ZIP export</b> and plain <b>.txt chat files</b></div>
+</div>
+
+<!-- ── Loading ── -->
+<div id="loading" class="hidden">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loading-text">Reading ZIP file…</div>
+</div>
+
+<!-- ── App ── -->
+<div id="app">
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-header-title">Chats</span>
+      <button class="icon-btn" title="Load another file" onclick="resetApp()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+      </button>
+    </div>
+    <div class="search-bar">
+      <input id="sidebar-search" type="text" placeholder="Search or start new chat" oninput="filterChats(this.value)" />
+    </div>
+    <div id="chat-list"></div>
+  </div>
+
+  <!-- Chat window -->
+  <div id="chat-window">
+    <!-- Empty state -->
+    <div id="empty-state">
+      <div class="empty-icon">
+        <svg viewBox="0 0 32 32"><path d="M16 2C8.268 2 2 8.268 2 16c0 2.47.67 4.78 1.836 6.76L2 30l7.46-1.818A13.94 13.94 0 0 0 16 30c7.732 0 14-6.268 14-14S23.732 2 16 2z"/></svg>
+      </div>
+      <div class="empty-title">WhatsApp Chat Viewer</div>
+      <div class="empty-sub">Select a chat from the sidebar to start reading</div>
+    </div>
+
+    <!-- Actual chat (hidden until selected) -->
+    <div id="active-chat" style="display:none; flex-direction:column; height:100%; overflow:hidden;">
+      <div class="chat-header">
+        <div class="header-avatar" id="header-avatar">A</div>
+        <div class="header-info">
+          <div class="header-name" id="header-name">Chat name</div>
+          <div class="header-sub" id="header-sub">0 messages</div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" id="search-toggle-btn" title="Search in chat" onclick="toggleMsgSearch()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          </button>
+          <button class="icon-btn" title="Back to list (mobile)" onclick="backToList()" style="display:none;" id="back-btn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="msg-search-bar hidden" id="msg-search-bar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input id="msg-search-input" type="text" placeholder="Search in conversation…" oninput="searchMessages(this.value)" />
+        <span id="msg-search-count"></span>
+        <button class="icon-btn" onclick="clearMsgSearch()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="stats-bar" id="stats-bar"></div>
+      <div id="messages"></div>
+      <button id="scroll-btn" onclick="scrollToBottom()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="chat-bottom">
+        <button class="icon-btn">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+        </button>
+        <input class="chat-bottom-input" type="text" placeholder="This is a viewer — messages can't be sent" readonly />
+        <button class="icon-btn">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 12c0 5.247-4.253 9.5-9.5 9.5S2.5 17.247 2.5 12 6.753 2.5 12 2.5s9.5 4.253 9.5 9.5z"/><path d="m10 15 5-3-5-3v6z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──
+let chats = [];
+let currentChat = null;
+let msgSearchActive = false;
+
+// ── Colors per sender ──
+const SENDER_COLORS = ['#d4a373','#06d6a0','#ef476f','#ffd166','#118ab2','#ff9f1c','#a8dadc','#e9c46a','#f4a261'];
+const senderColorMap = {};
+let senderColorIdx = 0;
+function senderColor(name) {
+  if (!senderColorMap[name]) {
+    senderColorMap[name] = SENDER_COLORS[senderColorIdx % SENDER_COLORS.length];
+    senderColorIdx++;
+  }
+  return senderColorMap[name];
+}
+
+function initials(name) {
+  const parts = (name || '?').trim().split(/\s+/);
+  return parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase() : (parts[0][0] || '?').toUpperCase();
+}
+
+// ── Drag & drop ──
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); });
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+async function handleFile(file) {
+  if (!file) return;
+  showLoading('Reading file…');
+  try {
+    if (file.name.endsWith('.zip')) {
+      await loadZip(file);
+    } else if (file.name.endsWith('.txt')) {
+      const text = await file.text();
+      const chatName = file.name.replace(/\.txt$/, '').replace(/WhatsApp Chat with /i, '').trim();
+      chats = [parseChat(chatName, text)];
+      renderSidebar();
+      showApp();
+    } else {
+      hideLoading();
+      alert('Please drop a .zip or .txt file exported from WhatsApp.');
+    }
+  } catch (e) {
+    hideLoading();
+    alert('Error reading file: ' + e.message);
+  }
+}
+
+async function loadZip(file) {
+  setLoading('Unpacking ZIP…');
+  const zip = await JSZip.loadAsync(file);
+  const txtFiles = [];
+  zip.forEach((path, entry) => {
+    if (!entry.dir && path.endsWith('.txt')) txtFiles.push({ path, entry });
+  });
+  if (txtFiles.length === 0) {
+    hideLoading();
+    alert('No .txt chat files found inside the ZIP. Make sure it is a WhatsApp export.');
+    return;
+  }
+  setLoading(`Parsing ${txtFiles.length} chat(s)…`);
+  chats = [];
+  for (const { path, entry } of txtFiles) {
+    const text = await entry.async('string');
+    const chatName = path.split('/').pop().replace(/\.txt$/, '').replace(/WhatsApp Chat with /i, '').trim();
+    chats.push(parseChat(chatName, text));
+  }
+  chats.sort((a, b) => b.lastTs - a.lastTs);
+  renderSidebar();
+  showApp();
+}
+
+// ── Parser ──
+// Handles: [dd/mm/yyyy, hh:mm] Name: text
+//          dd/mm/yyyy, hh:mm - Name: text   (Android style)
+//          [dd.mm.yyyy, hh:mm:ss] Name: text
+// Also handles MM/DD/YYYY (iOS US locale)
+const LINE_RE = /^[\[‎]?(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})[,\s]+(\d{1,2}:\d{2}(?::\d{2})?(?:\s?[AP]M)?)\]?[\s\-–]+([^:]+?):\s(.+)$/;
+const SYS_RE  = /^[\[‎]?(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})[,\s]+(\d{1,2}:\d{2}(?::\d{2})?(?:\s?[AP]M)?)\]?[\s\-–]+(.+)$/;
+
+function parseDate(dateStr, timeStr) {
+  // Normalize separators
+  const d = dateStr.replace(/\./g, '/').replace(/-/g, '/');
+  const parts = d.split('/');
+  if (parts.length !== 3) return null;
+  let [a, b, c] = parts.map(Number);
+  // Guess year position
+  let day, month, year;
+  if (c > 31) { day = a; month = b; year = c; }
+  else if (a > 31) { year = a; month = b; day = c; }
+  else { day = a; month = b; year = c; } // default dd/mm/yy
+  if (year < 100) year += 2000;
+  // time
+  let t = timeStr.trim();
+  let hours = 0, mins = 0, secs = 0;
+  const ampm = t.match(/([AP]M)/i);
+  t = t.replace(/\s?[AP]M/i, '');
+  const tp = t.split(':');
+  hours = parseInt(tp[0], 10);
+  mins = parseInt(tp[1], 10);
+  secs = tp[2] ? parseInt(tp[2], 10) : 0;
+  if (ampm) {
+    if (ampm[1].toUpperCase() === 'PM' && hours < 12) hours += 12;
+    if (ampm[1].toUpperCase() === 'AM' && hours === 12) hours = 0;
+  }
+  return new Date(year, month - 1, day, hours, mins, secs);
+}
+
+const MEDIA_KEYWORDS = ['<Media omitted>', '(file attached)', 'image omitted', 'video omitted', 'audio omitted', 'sticker omitted', 'document omitted', 'GIF omitted', 'Contact card omitted'];
+const DELETED_RE = /^(This message was deleted|You deleted this message)\.?$/i;
+
+function mediaType(text) {
+  const t = text.toLowerCase();
+  if (t.includes('image')) return { icon: '🖼️', label: 'Image' };
+  if (t.includes('video')) return { icon: '🎬', label: 'Video' };
+  if (t.includes('audio') || t.includes('ptt')) return { icon: '🎵', label: 'Audio' };
+  if (t.includes('sticker')) return { icon: '😄', label: 'Sticker' };
+  if (t.includes('gif')) return { icon: '🎭', label: 'GIF' };
+  if (t.includes('contact') || t.includes('card')) return { icon: '👤', label: 'Contact' };
+  if (t.includes('document') || t.includes('file')) return { icon: '📄', label: 'Document' };
+  return { icon: '📎', label: 'Attachment' };
+}
+
+function isMedia(text) {
+  return MEDIA_KEYWORDS.some(k => text.toLowerCase().includes(k.toLowerCase()));
+}
+
+function parseChat(name, raw) {
+  const lines = raw.split('\n');
+  const messages = [];
+  let current = null;
+  const senders = new Set();
+
+  for (const line of lines) {
+    const trimmed = line.replace(/^\uFEFF/, '').trim();
+    if (!trimmed) continue;
+    const m = trimmed.match(LINE_RE);
+    if (m) {
+      if (current) messages.push(current);
+      const [, dateStr, timeStr, sender, text] = m;
+      const ts = parseDate(dateStr, timeStr);
+      senders.add(sender.trim());
+      current = { ts, timeStr: timeStr.replace(/:\d{2}$/, '').trim(), dateStr, sender: sender.trim(), text: text.trim(), type: 'msg' };
+    } else {
+      const s = trimmed.match(SYS_RE);
+      if (s) {
+        if (current) messages.push(current);
+        const [, dateStr, timeStr, text] = s;
+        const ts = parseDate(dateStr, timeStr);
+        current = { ts, timeStr: timeStr.replace(/:\d{2}$/, '').trim(), dateStr, text: text.trim(), type: 'system' };
+      } else if (current) {
+        // Continuation line
+        current.text += '\n' + trimmed;
+      }
+    }
+  }
+  if (current) messages.push(current);
+
+  // Infer "me": pick sender with fewest messages if 2 people (group chats just pick first)
+  const senderArr = [...senders];
+  let me = null;
+  if (senderArr.length === 2) {
+    const counts = {};
+    for (const msg of messages) if (msg.sender) counts[msg.sender] = (counts[msg.sender] || 0) + 1;
+    me = Object.entries(counts).sort((a, b) => a[1] - b[1])[0][0];
+  }
+
+  const lastMsg = messages.filter(m => m.type === 'msg').slice(-1)[0];
+  const lastTs = lastMsg ? (lastMsg.ts || 0) : 0;
+  const isGroup = senderArr.length > 2;
+
+  return { name, messages, me, isGroup, senders: senderArr, lastTs, lastMsg };
+}
+
+// ── Sidebar ──
+function renderSidebar() {
+  const list = document.getElementById('chat-list');
+  list.innerHTML = chats.map((chat, i) => {
+    const last = chat.lastMsg;
+    const preview = last ? (last.sender ? `${last.sender.split(' ')[0]}: ` : '') + (isMedia(last.text) ? '📎 Media' : last.text.replace(/\n/g, ' ').slice(0, 60)) : '';
+    const timeLabel = last && last.ts ? formatSidebarTime(last.ts) : '';
+    const count = chat.messages.filter(m => m.type === 'msg').length;
+    const av = initials(chat.name);
+    const groupClass = chat.isGroup ? 'group' : '';
+    return `<div class="chat-item" onclick="openChat(${i})" id="chat-item-${i}">
+      <div class="chat-avatar ${groupClass}">${av}</div>
+      <div class="chat-info">
+        <div class="chat-name">${escHtml(chat.name)}</div>
+        <div class="chat-preview">${escHtml(preview)}</div>
+      </div>
+      <div class="chat-meta">
+        <div class="chat-time">${timeLabel}</div>
+        <div class="msg-count">${count}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function filterChats(query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll('.chat-item').forEach((el, i) => {
+    el.style.display = !q || chats[i].name.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+function formatSidebarTime(ts) {
+  if (!ts) return '';
+  const now = new Date();
+  const d = new Date(ts);
+  const diff = now - d;
+  if (diff < 86400000 && d.getDate() === now.getDate()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (diff < 7 * 86400000) return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
+  return `${d.getDate()}/${d.getMonth()+1}/${String(d.getFullYear()).slice(2)}`;
+}
+
+// ── Open chat ──
+function openChat(idx) {
+  currentChat = chats[idx];
+  document.querySelectorAll('.chat-item').forEach((el, i) => el.classList.toggle('active', i === idx));
+  document.getElementById('empty-state').style.display = 'none';
+  const activeChat = document.getElementById('active-chat');
+  activeChat.style.display = 'flex';
+
+  const av = document.getElementById('header-avatar');
+  av.textContent = initials(currentChat.name);
+  av.className = 'header-avatar' + (currentChat.isGroup ? ' group' : '');
+  document.getElementById('header-name').textContent = currentChat.name;
+  const msgCount = currentChat.messages.filter(m => m.type === 'msg').length;
+  document.getElementById('header-sub').textContent = `${msgCount} messages`;
+
+  renderStats(currentChat);
+  renderMessages(currentChat);
+  clearMsgSearch();
+
+  // Mobile
+  if (window.innerWidth <= 720) {
+    document.getElementById('sidebar').classList.add('hidden');
+    document.getElementById('back-btn').style.display = 'flex';
+  }
+}
+
+function backToList() {
+  document.getElementById('sidebar').classList.remove('hidden');
+  document.getElementById('back-btn').style.display = 'none';
+}
+
+// ── Stats ──
+function renderStats(chat) {
+  const msgs = chat.messages.filter(m => m.type === 'msg');
+  const mediaCount = msgs.filter(m => isMedia(m.text)).length;
+  const senderCounts = {};
+  msgs.forEach(m => { senderCounts[m.sender] = (senderCounts[m.sender] || 0) + 1; });
+  const top = Object.entries(senderCounts).sort((a,b) => b[1]-a[1])[0];
+  const days = chat.messages[0] && chat.messages[0].ts && chat.messages.slice(-1)[0].ts ?
+    Math.round((chat.messages.slice(-1)[0].ts - chat.messages[0].ts) / 86400000) + 1 : '?';
+
+  const bar = document.getElementById('stats-bar');
+  bar.innerHTML = `
+    <div class="stat-item"><b>${msgs.length}</b> messages</div>
+    <div class="stat-item"><b>${mediaCount}</b> media</div>
+    <div class="stat-item"><b>${days}</b> days</div>
+    ${top ? `<div class="stat-item">Most active: <b>${escHtml(top[0].split(' ')[0])}</b> (${top[1]})</div>` : ''}
+    <div class="stat-item"><b>${chat.senders.length}</b> participants</div>
+  `;
+}
+
+// ── Render messages ──
+function renderMessages(chat) {
+  const container = document.getElementById('messages');
+  const msgs = chat.messages;
+  let html = '';
+  let lastDate = '';
+  let lastSender = null;
+
+  for (let i = 0; i < msgs.length; i++) {
+    const msg = msgs[i];
+    // Date divider
+    const dateLabel = msg.ts ? msg.ts.toLocaleDateString([], { weekday:'long', day:'numeric', month:'long', year:'numeric' }) : msg.dateStr;
+    if (dateLabel !== lastDate) {
+      html += `<div class="date-divider"><span>${escHtml(dateLabel)}</span></div>`;
+      lastDate = dateLabel;
+      lastSender = null;
+    }
+
+    if (msg.type === 'system') {
+      html += `<div class="bubble-row system"><div class="bubble">${escHtml(msg.text)}</div></div>`;
+      lastSender = null;
+      continue;
+    }
+
+    const isOut = msg.sender === chat.me;
+    const dir = isOut ? 'out' : 'in';
+    const sameSender = msg.sender === lastSender;
+    const noTail = sameSender ? 'no-tail' : '';
+
+    let bodyHtml = '';
+    // Sender label (group chats, incoming only)
+    if (!isOut && chat.isGroup && !sameSender) {
+      bodyHtml += `<div class="bubble-sender" style="color:${senderColor(msg.sender)}">${escHtml(msg.sender)}</div>`;
+    }
+
+    if (DELETED_RE.test(msg.text.trim())) {
+      bodyHtml += `<div class="bubble-text deleted">🚫 ${escHtml(msg.text)}</div>`;
+    } else if (isMedia(msg.text)) {
+      const mt = mediaType(msg.text);
+      bodyHtml += `<div class="bubble-media">${mt.icon} ${mt.label}</div>`;
+    } else {
+      bodyHtml += `<div class="bubble-text" data-raw="${escAttr(msg.text)}">${escHtml(msg.text)}</div>`;
+    }
+
+    // Tick (for outgoing)
+    const tick = isOut ? `<svg class="tick" viewBox="0 0 16 11"><path d="M11.071.653a.75.75 0 0 1 .006 1.06l-6.25 6.5a.75.75 0 0 1-1.073-.01L1.47 5.848a.75.75 0 0 1 1.06-1.06l1.765 1.765 5.717-5.9a.75.75 0 0 1 1.059 0zm2.5 0a.75.75 0 0 1 .006 1.06l-6.25 6.5a.75.75 0 0 1-1.073-.01l-.927-.976a.75.75 0 1 1 1.088-1.033l.396.416 5.7-5.957a.75.75 0 0 1 1.06 0z"/></svg>` : '';
+    bodyHtml += `<div class="bubble-footer"><span class="bubble-time">${escHtml(msg.timeStr)}</span>${tick}</div>`;
+
+    html += `<div class="bubble-row ${dir} ${noTail}"><div class="bubble">${bodyHtml}</div></div>`;
+    lastSender = msg.sender;
+  }
+
+  container.innerHTML = html;
+  scrollToBottom();
+
+  // Scroll-to-bottom button
+  container.addEventListener('scroll', () => {
+    const btn = document.getElementById('scroll-btn');
+    const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 200;
+    btn.classList.toggle('visible', !nearBottom);
+  });
+}
+
+function scrollToBottom() {
+  const c = document.getElementById('messages');
+  c.scrollTop = c.scrollHeight;
+}
+
+// ── Message search ──
+function toggleMsgSearch() {
+  msgSearchActive = !msgSearchActive;
+  document.getElementById('msg-search-bar').classList.toggle('hidden', !msgSearchActive);
+  if (msgSearchActive) document.getElementById('msg-search-input').focus();
+  else clearMsgSearch();
+}
+
+function clearMsgSearch() {
+  msgSearchActive = false;
+  document.getElementById('msg-search-bar').classList.add('hidden');
+  document.getElementById('msg-search-input').value = '';
+  document.getElementById('msg-search-count').textContent = '';
+  // Remove highlights
+  document.querySelectorAll('.bubble-text .highlight').forEach(el => {
+    el.replaceWith(document.createTextNode(el.textContent));
+  });
+  document.querySelectorAll('.bubble-text').forEach(el => {
+    const raw = el.getAttribute('data-raw');
+    if (raw !== null) el.innerHTML = escHtml(raw);
+  });
+}
+
+function searchMessages(query) {
+  // Reset all first
+  document.querySelectorAll('.bubble-text').forEach(el => {
+    const raw = el.getAttribute('data-raw');
+    if (raw !== null) el.innerHTML = escHtml(raw);
+  });
+  if (!query.trim()) { document.getElementById('msg-search-count').textContent = ''; return; }
+
+  let count = 0;
+  const q = query.toLowerCase();
+  document.querySelectorAll('.bubble-text').forEach(el => {
+    const raw = el.getAttribute('data-raw');
+    if (raw === null) return;
+    if (raw.toLowerCase().includes(q)) {
+      count++;
+      el.innerHTML = escHtml(raw).replace(new RegExp(escRegex(escHtml(query)), 'gi'), m => `<mark class="highlight">${m}</mark>`);
+    }
+  });
+  document.getElementById('msg-search-count').textContent = count > 0 ? `${count} match${count !== 1 ? 'es' : ''}` : 'No results';
+
+  // Scroll to first match
+  const first = document.querySelector('.highlight');
+  if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ── Utilities ──
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) {
+  return String(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function escRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function showLoading(msg) {
+  document.getElementById('loading-text').textContent = msg;
+  document.getElementById('loading').classList.remove('hidden');
+}
+function setLoading(msg) { document.getElementById('loading-text').textContent = msg; }
+function hideLoading() { document.getElementById('loading').classList.add('hidden'); }
+function showApp() {
+  hideLoading();
+  document.getElementById('drop-screen').classList.add('hidden');
+  document.getElementById('app').classList.add('visible');
+}
+function resetApp() {
+  chats = [];
+  currentChat = null;
+  document.getElementById('app').classList.remove('visible');
+  document.getElementById('drop-screen').classList.remove('hidden');
+  document.getElementById('chat-list').innerHTML = '';
+  document.getElementById('empty-state').style.display = '';
+  document.getElementById('active-chat').style.display = 'none';
+  document.getElementById('sidebar-search').value = '';
+  fileInput.value = '';
+}
+</script>
+</body>
+</html>
